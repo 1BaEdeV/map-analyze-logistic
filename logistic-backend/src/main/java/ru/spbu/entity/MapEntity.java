@@ -5,7 +5,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.Getter;
@@ -25,8 +24,7 @@ public class MapEntity {
 
   private String contentType;
 
-  @Lob
-  @Column(columnDefinition = "BYTEA")
+  @Column(name = "data", nullable = false)
   private byte[] data;
 
   private LocalDateTime uploadDate;

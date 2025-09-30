@@ -2,8 +2,10 @@ package ru.spbu.service;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import ru.spbu.entity.MapEntity;
 import ru.spbu.repository.MapRepository;
@@ -22,5 +24,10 @@ public class MapService {
     entity.setUploadDate(LocalDateTime.now());
 
     mapRepository.save(entity);
+  }
+
+  @Transactional(readOnly = true)
+  public Optional<MapEntity> findMap(Long id) {
+    return mapRepository.findById(id);
   }
 }
