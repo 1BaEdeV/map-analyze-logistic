@@ -24,8 +24,43 @@ export default function AnalysisPage() {
         reader.readAsDataURL(selectedFile); // Преобразуем файл  в строку
     };
 
+    function areaToGeoJSON(area) {
+        return {
+            type: "Feature",
+            geometry: {
+                type: "Polygon",
+                coordinates: [[
+                    [area.minLng, area.minLat],
+                    [area.maxLng, area.minLat],
+                    [area.maxLng, area.maxLat],
+                    [area.minLng, area.maxLat],
+                    [area.minLng, area.minLat],
+                ]]
+            },
+            properties: {
+                zoom: area.zoom || null,
+            }
+        };
+    }
+
+    async function sendGeoJSON(geojson) {
+        try {
+            const response = await fetch("https://httpbin.org/post", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(geojson)
+            });
+            const data = await response.json();
+            console.log("🔁 Ответ от сервера:", data.json);
+            alert("✅ Участок отправлен! Проверь консоль для деталей.");
+        } catch (err) {
+            console.error("❌ Ошибка при отправке:", err);
+            alert("Ошибка при отправке данных на сервер!");
+        }
+    }
+
     // Кнопка "Начать Анализ"
-    const handleAnalyze = () => {
+    const handleAnalyze = async () => {
         if (mode === "file") {
             if (!file) {
                 alert("Выберите файл для карты!");
@@ -43,8 +78,10 @@ export default function AnalysisPage() {
             }
 
             // TODO: Логика обработки выделенного участка карты
-            console.log("Отправка выделенного участка карты");
-            alert("Участок карты отправлен на сервер");
+            // Создаём GeoJSON-объект из выбранной области
+            const geojson = areaToGeoJSON(selectedArea);
+            console.log("Отправляем GeoJSON:", geojson);
+            await sendGeoJSON(geojson);
         }
 
     };
@@ -106,7 +143,11 @@ export default function AnalysisPage() {
                 <div style={{ marginBottom: 16 }}>
                     <h2>Карта региона</h2>
                     <MapView onAreaSelect={setSelectedArea} />
-                    {selectedArea && <p>Область выбрана для анализа</p>}
+                    {selectedArea && (
+                        <p style={{ color: "green" }}>
+                            ✅ Область выбрана
+                        </p>
+                    )}
                 </div>
             )}
 

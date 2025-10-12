@@ -17,13 +17,12 @@ function SelectArea({ onChange }) {
                 if (newPoints.length === 2) {
                     // callback с координатами прямоугольника
                     const [p1, p2] = newPoints;
-                    const bounds = [
-                        [Math.min(p1.lat, p2.lat), Math.min(p1.lng, p2.lng)], // нижний левый угол
-                        [Math.min(p1.lat, p2.lat), Math.max(p1.lng, p2.lng)], // нижний правый угол
-                        [Math.max(p1.lat, p2.lat), Math.max(p1.lng, p2.lng)], // верхний правый угол
-                        [Math.max(p1.lat, p2.lat), Math.min(p1.lng, p2.lng)], // верхний левый угол
-                    ];
-                    onChange(bounds);
+                    const minLat = Math.min(p1.lat, p2.lat);
+                    const maxLat = Math.max(p1.lat, p2.lat);
+                    const minLng = Math.min(p1.lng, p2.lng);
+                    const maxLng = Math.max(p1.lng, p2.lng);
+                    const areaObject = { minLat, minLng, maxLat, maxLng };
+                    onChange(areaObject);
                 }
             } else {
                 // Сброс при третьем клике
