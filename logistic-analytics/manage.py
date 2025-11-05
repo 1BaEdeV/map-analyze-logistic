@@ -1,46 +1,46 @@
+import os
 import osmnx as ox
-import folium
+import geopandas as gpd
 import pandas as pd
 import numpy as np
-from sklearn.cluster import DBSCAN
 import networkx as nx
-import os
-import geopandas as gpd
+import folium
+from math import radians, sin, cos, sqrt, atan2
 
-# -------------------------
 # Настройки
-# -------------------------
+# Прямоугольная область вокруг Казани (bbox: запад, юг, восток, север)
 bbox_kazan = (48.8, 55.6, 49.3, 55.9)
+
+# Фильтр логистических объектов по типу здания
 tags_logistics = {
     'building': ['warehouse', 'depot', 'industrial']
 }
 
-# Пути к кэшу
+# Пути к локальным кэширующим файлам
 osm_features_cache = "kazan_logistics_features.geojson"
 osm_graph_cache = "kazan_drive.graphml"
 
-# -------------------------
-# 1) Загружаем логистические объекты
-# -------------------------
+
+# Загрузка или кэширование логистических объектов
 if os.path.exists(osm_features_cache):
     centers_gdf = gpd.read_file(osm_features_cache)
-    print("Объекты загружены из кэша")
+    print("✅ Логистические объекты загружены из кэша")
 else:
-    print("Ищем логистические объекты...")
+    print("🔍 Ищем логистические объекты в OpenStreetMap...")
     centers_gdf = ox.features.features_from_bbox(bbox=bbox_kazan, tags=tags_logistics)
     centers_gdf.to_file(osm_features_cache, driver="GeoJSON")
-    print(f"Найдено объектов: {len(centers_gdf)} и сохранено в кэш")
+    print(f"💾 Найдено объектов: {len(centers_gdf)} и сохранено в кэш")
 
 if centers_gdf.empty:
-    print("Не найдено логистических центров.")
+    print("❌ Не найдено логистических центров в заданной области.")
     exit()
 
-# -------------------------
-# 2) Получаем координаты и информацию
-# -------------------------
+
+# Получение координат объектов
 coords = []
-for idx, row in centers_gdf.iterrows():
+for _, row in centers_gdf.iterrows():
     geom = row.geometry
+    # Для зданий используем центроид полигона
     if geom.geom_type in ['Polygon', 'MultiPolygon']:
         y, x = geom.centroid.y, geom.centroid.x
     else:
@@ -52,86 +52,60 @@ for idx, row in centers_gdf.iterrows():
     })
 
 coords_df = pd.DataFrame(coords)
+print(f"Получено {len(coords_df)} координат логистических точек")
 
-# -------------------------
-# 3) Кластеризация DBSCAN
-# -------------------------
-kms_per_radian = 6371.0088
-epsilon = 0.15 / kms_per_radian  # ~150 м
-coords_rad = np.radians(coords_df[['lat','lon']])
-db = DBSCAN(eps=epsilon, min_samples=1, algorithm='ball_tree', metric='haversine').fit(coords_rad)
-coords_df['cluster'] = db.labels_
 
-# -------------------------
-# 4) Агрегируем кластеры
-# -------------------------
-clustered_centers = coords_df.groupby('cluster').agg({
-    'lat': 'mean',
-    'lon': 'mean',
-    'tags': lambda x: list(x)
-}).reset_index()
-clustered_centers['name'] = ['Логистический центр ' + str(i+1) for i in clustered_centers.index]
-print(f"После кластеризации центров: {len(clustered_centers)}")
+# Функция геодезического расстояния
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371000  # Радиус Земли в метрах
+    phi1, phi2 = radians(lat1), radians(lat2)
+    dphi, dlambda = radians(lat2 - lat1), radians(lon2 - lon1)
+    a = sin(dphi/2)**2 + cos(phi1)*cos(phi2)*sin(dlambda/2)**2
+    return 2 * R * atan2(sqrt(a), sqrt(1 - a))
 
-# -------------------------
-# 5) Загружаем граф дорог
-# -------------------------
-if os.path.exists(osm_graph_cache):
-    G_drive = ox.load_graphml(osm_graph_cache)
-    print("Граф загружен из кэша")
-else:
-    print("Загружаем дорожную сеть...")
-    G_drive = ox.graph_from_bbox(bbox=bbox_kazan, network_type='drive')
-    ox.save_graphml(G_drive, osm_graph_cache)
-    print("Граф скачан и сохранён в кэш")
-
-# -------------------------
-# 6) Находим ближайшие узлы для кластеров
-# -------------------------
-clustered_centers['nearest_node'] = clustered_centers.apply(
-    lambda row: ox.distance.nearest_nodes(G_drive, X=row['lon'], Y=row['lat']), axis=1
-)
-
-# -------------------------
-# 7) Строим граф кластеров с весами (только между центрами)
-# -------------------------
-nodes_list = clustered_centers['nearest_node'].tolist()
+# Формируем граф по прямым расстояниям
 edges = []
-
-# Вычисляем кратчайшие пути только между кластерами
-for i, row_i in clustered_centers.iterrows():
-    lengths = nx.single_source_dijkstra_path_length(G_drive, row_i['nearest_node'], weight='length')
-    for j, row_j in clustered_centers.iterrows():
+for i, row_i in coords_df.iterrows():
+    for j, row_j in coords_df.iterrows():
         if i < j:
-            length = lengths.get(row_j['nearest_node'], np.inf)
-            if np.isfinite(length):
-                edges.append((i, j, {'weight': length}))
+            dist = haversine(row_i['lat'], row_i['lon'], row_j['lat'], row_j['lon'])
+            edges.append((i, j, {'weight': dist}))
 
-# Создаём граф NetworkX
-G_clusters = nx.Graph()
-G_clusters.add_nodes_from(clustered_centers.index.tolist())
-G_clusters.add_edges_from(edges)
+G = nx.Graph()
+G.add_nodes_from(coords_df.index)
+G.add_edges_from(edges)
 
-# -------------------------
-# 8) Минимальный остов (MST)
-# -------------------------
-mst = nx.minimum_spanning_tree(G_clusters)
 
-# -------------------------
-# 9) Визуализация на Folium
-# -------------------------
+# Минимальное остовное дерево
+mst = nx.minimum_spanning_tree(G)
+print(f" MST содержит {len(mst.nodes())} вершин и {len(mst.edges())} рёбер")
+
+
+# Визуализация на карте
+# Центр карты — середина bbox
 m = folium.Map(
-    location=[(bbox_kazan[1]+bbox_kazan[3])/2, (bbox_kazan[0]+bbox_kazan[2])/2],
+    location=[(bbox_kazan[1] + bbox_kazan[3]) / 2, (bbox_kazan[0] + bbox_kazan[2]) / 2],
     zoom_start=11
 )
 
-# Вершины с информацией
-for idx, row in clustered_centers.iterrows():
-    popup_html = f"<b>{row['name']}</b><br>"
-    for bld in row['tags']:
-        building_type = bld.get('building', 'неизвестно')
-        name = bld.get('name', '')
-        popup_html += f"{building_type} {name}<br>"
+# Точки (логистические центры)
+for i, row in coords_df.iterrows():
+    tags = row['tags']
+    name = tags.get('name', None)
+    btype = tags.get('building', '—')
+    street = tags.get('addr:street', '')
+    housenumber = tags.get('addr:housenumber', '')
+    city = tags.get('addr:city', '')
+
+    # Формируем popup
+    popup_lines = [f"<b>Тип:</b> {btype}"]
+    if name:
+        popup_lines.append(f"<b>Название:</b> {name}")
+    if street or housenumber or city:
+        address = ", ".join(filter(None, [city, street, housenumber]))
+        popup_lines.append(f"<b>Адрес:</b> {address}")
+
+    popup_html = "<br>".join(popup_lines)
 
     folium.CircleMarker(
         location=[row['lat'], row['lon']],
@@ -139,14 +113,12 @@ for idx, row in clustered_centers.iterrows():
         color='red',
         fill=True,
         fill_color='red',
-        fill_opacity=0.7,
-        popup=popup_html
+        popup=folium.Popup(popup_html, max_width=500)
     ).add_to(m)
 
-# MST рёбра
+# Рёбра MST — прямые линии между складами
 for u, v, data in mst.edges(data=True):
-    row_u = clustered_centers.loc[u]
-    row_v = clustered_centers.loc[v]
+    row_u, row_v = coords_df.loc[u], coords_df.loc[v]
     folium.PolyLine(
         locations=[[row_u['lat'], row_u['lon']], [row_v['lat'], row_v['lon']]],
         color='blue',
@@ -154,5 +126,7 @@ for u, v, data in mst.edges(data=True):
         opacity=0.6
     ).add_to(m)
 
-m.save("kazan_logistics_graph_mst.html")
-print("Карта с MST маршрутов сохранена: kazan_logistics_graph_mst.html")
+
+output_file = "kazan_logistics_graph_mst.html"
+m.save(output_file)
+print(f"📄 Карта с MST маршрутов сохранена: {output_file}")
