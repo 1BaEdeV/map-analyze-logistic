@@ -52,10 +52,29 @@ class LogisticsService:
             else:
                 y, x = geom.y, geom.x
 
+            # Конвертируем tags в JSON-сериализуемый формат
+            tags = {}
+            for key, value in row.to_dict().items():
+                if key == 'geometry':
+                    continue
+                # Пропускаем Shapely объекты и другие несериализуемые типы
+                if value is None or isinstance(value, (str, int, float, bool)):
+                    tags[key] = value
+                elif isinstance(value, (list, dict)):
+                    try:
+                        # Проверяем, что можно сериализовать
+                        import json
+                        json.dumps(value)
+                        tags[key] = value
+                    except (TypeError, ValueError):
+                        tags[key] = str(value)
+                else:
+                    tags[key] = str(value)
+
             coords.append({
                 'lat': y,
                 'lon': x,
-                'tags': row.to_dict()
+                'tags': tags
             })
 
         return pd.DataFrame(coords)
