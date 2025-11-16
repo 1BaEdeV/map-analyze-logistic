@@ -8,6 +8,7 @@ import folium
 from math import radians, sin, cos, sqrt, atan2, isnan
 from typing import Tuple, Dict, Any, Optional
 
+
 # =====================
 #  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # =====================
@@ -17,7 +18,7 @@ def haversine(lat1, lon1, lat2, lon2):
     R = 6371000
     phi1, phi2 = radians(lat1), radians(lat2)
     dphi, dlambda = radians(lat2 - lat1), radians(lon2 - lon1)
-    a = sin(dphi/2)**2 + cos(phi1)*cos(phi2)*sin(dlambda/2)**2
+    a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
     return 2 * R * atan2(sqrt(a), sqrt(1 - a))
 
 
@@ -41,9 +42,9 @@ def get_default_tags(mode: str) -> Dict[str, list]:
 # =====================
 
 def load_logistics_features(
-    bbox: Tuple[float, float, float, float],
-    mode: str = "auto",
-    cache_path: Optional[str] = None
+        bbox: Tuple[float, float, float, float],
+        mode: str = "auto",
+        cache_path: Optional[str] = None
 ) -> gpd.GeoDataFrame:
     """Загружает или кэширует объекты логистической инфраструктуры"""
     tags = get_default_tags(mode)
@@ -98,55 +99,53 @@ def build_mst_graph(G: nx.Graph) -> nx.Graph:
     return nx.minimum_spanning_tree(G)
 
 
-def visualize_mst_map(
-    coords_df: pd.DataFrame,
-    mst: nx.Graph,
-    bbox: Tuple[float, float, float, float],
-    output_file: str = "logistics_mst.html"
-) -> str:
-    """Визуализирует MST-граф на карте и сохраняет как HTML"""
+def visualize_mst_map(coords_df, mst, bbox, output_file="logistics_mst.html"):
     m = folium.Map(
         location=[(bbox[1] + bbox[3]) / 2, (bbox[0] + bbox[2]) / 2],
         zoom_start=11
     )
 
-    # Точки
+    # --- точки
     for i, row in coords_df.iterrows():
-        # пропускаем неверные координаты
         if pd.isna(row["lat"]) or pd.isna(row["lon"]):
             continue
-
         tags = row["tags"]
         name = tags.get("name")
         btype = tags.get("building", "—")
-        street = tags.get("addr:street")
-        housenumber = tags.get("addr:housenumber")
-        city = tags.get("addr:city")
-
         popup_lines = [f"<b>Тип:</b> {btype}"]
         if name and not pd.isna(name):
             popup_lines.append(f"<b>Название:</b> {name}")
-
-        # составляем адрес, пропуская пустые или NaN
-        addr_parts = [p for p in [city, street, housenumber] if p and not pd.isna(p)]
-        if addr_parts:
-            popup_lines.append(f"<b>Адрес:</b> {', '.join(addr_parts)}")
-
         folium.CircleMarker(
             location=[float(row["lat"]), float(row["lon"])],
-            radius=6,
-            color="red",
-            fill=True,
-            fill_color="red",
+            radius=6, color="red", fill=True, fill_color="red",
             popup=folium.Popup("<br>".join(popup_lines), max_width=500)
         ).add_to(m)
 
-    # Рёбра MST
+    # --- рёбра и подписи расстояний
     for u, v, data in mst.edges(data=True):
         row_u, row_v = coords_df.loc[u], coords_df.loc[v]
+        dist_m = float(data["weight"])
+        dist_km = dist_m / 1000.0
+        midpoint = [(row_u["lat"] + row_v["lat"]) / 2, (row_u["lon"] + row_v["lon"]) / 2]
+
         folium.PolyLine(
             locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
             color="blue", weight=2, opacity=0.6
+        ).add_to(m)
+
+        folium.map.Marker(
+            midpoint,
+            icon=folium.DivIcon(
+                html=f'''
+                <div style="
+                    font-size: 10pt; 
+                    color: white; 
+                    font-weight: bold;
+                    text-shadow: -1px -1px 2px black, 1px 1px 2px black;">
+                    {dist_km:.2f} км
+                </div>
+                '''
+            )
         ).add_to(m)
 
     m.save(output_file)
@@ -160,11 +159,12 @@ def visualize_mst_map(
 
 import pandas as pd  # добавь импорт наверху, если его нет
 
+
 def generate_logistics_mst(
-    bbox: Tuple[float, float, float, float],
-    mode: str = "auto",
-    cache_dir: str = ".",
-    output_file: Optional[str] = None
+        bbox: Tuple[float, float, float, float],
+        mode: str = "auto",
+        cache_dir: str = ".",
+        output_file: Optional[str] = None
 ) -> Dict[str, Any]:
     """Главная функция: строит MST и возвращает полные данные"""
     os.makedirs(cache_dir, exist_ok=True)

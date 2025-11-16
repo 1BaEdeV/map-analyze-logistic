@@ -77,7 +77,7 @@ def get_map(
     """
     bbox = (west, south, east, north)
     try:
-        result = generate_logistics_mst(bbox, mode, cache_dir="cache")
+        result = generate_logistics_mst(bbox, mode, cache_dir="results")
         if result.get("status") != "ok":
             return HTMLResponse(f"<h3>{result.get('message', 'Нет данных')}</h3>", status_code=404)
 
