@@ -1,12 +1,13 @@
 import os
-import osmnx as ox
-import geopandas as gpd
-import pandas as pd
-import numpy as np
-import networkx as nx
-import folium
-from math import radians, sin, cos, sqrt, atan2, isnan
+from math import radians, sin, cos, sqrt, atan2
 from typing import Tuple, Dict, Any, Optional
+
+import folium
+import geopandas as gpd
+import networkx as nx
+import osmnx as ox
+import pandas as pd
+from haversine import haversine
 
 
 # =====================
@@ -99,13 +100,16 @@ def build_mst_graph(G: nx.Graph) -> nx.Graph:
     return nx.minimum_spanning_tree(G)
 
 
-def visualize_mst_map(coords_df, mst, bbox, output_file="logistics_mst.html"):
+def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.html"):
+    """
+    Отображает MST на карте Folium.
+    Для каждой пары связанных точек строится маршрут по дорогам выбранного типа (mode),
+    и отображается его длина.
+    """
     m = folium.Map(
         location=[(bbox[1] + bbox[3]) / 2, (bbox[0] + bbox[2]) / 2],
-        zoom_start=11
+        zoom_start=12
     )
-
-    # --- точки
     for i, row in coords_df.iterrows():
         if pd.isna(row["lat"]) or pd.isna(row["lon"]):
             continue
@@ -121,37 +125,111 @@ def visualize_mst_map(coords_df, mst, bbox, output_file="logistics_mst.html"):
             popup=folium.Popup("<br>".join(popup_lines), max_width=500)
         ).add_to(m)
 
-    # --- рёбра и подписи расстояний
+    print(f"📥 Загрузка дорожной сети для mode='{mode}' ...")
+    G_drive = ox.graph_from_bbox(bbox, network_type="drive")
+
+    print(f"✅ Граф: узлов={len(G_drive.nodes)}, рёбер={len(G_drive.edges)}")
+
+    # --- привязываем точки к узлам
+    coords_df = coords_df.copy()
+    coords_df["osm_node"] = ox.distance.nearest_nodes(
+        G_drive,
+        X=coords_df["lon"].values,
+        Y=coords_df["lat"].values
+    )
+
+    # --- рёбра и подписи реальных расстояний
+    print("🚗 Построение маршрутов по дорогам ...")
     for u, v, data in mst.edges(data=True):
-        row_u, row_v = coords_df.loc[u], coords_df.loc[v]
-        dist_m = float(data["weight"])
-        dist_km = dist_m / 1000.0
-        midpoint = [(row_u["lat"] + row_v["lat"]) / 2, (row_u["lon"] + row_v["lon"]) / 2]
+        node_u = coords_df.iloc[u]["osm_node"]
+        node_v = coords_df.iloc[v]["osm_node"]
 
-        folium.PolyLine(
-            locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
-            color="blue", weight=2, opacity=0.6
-        ).add_to(m)
+        try:
+            route = ox.routing.shortest_path(G_drive, node_u, node_v, weight="length", cpus=4)
+        except Exception:
+            route = None
 
-        folium.map.Marker(
-            midpoint,
-            icon=folium.DivIcon(
-                html=f'''
-                <div style="
-                    font-size: 10pt; 
-                    color: white; 
-                    font-weight: bold;
-                    text-shadow: -1px -1px 2px black, 1px 1px 2px black;">
-                    {dist_km:.2f} км
-                </div>
-                '''
-            )
-        ).add_to(m)
+        if route and len(route) > 1:
+            # вычисляем кратчайшее расстояние по дорогам
+            route_gdf = ox.routing.route_to_gdf(G_drive, route)
+            dist_m = float(route_gdf["length"].sum())
+            dist_km = dist_m / 1000.0
+
+            # рисуем прямую линию между исходными точками
+            row_u, row_v = coords_df.loc[u], coords_df.loc[v]
+            folium.PolyLine(
+                locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
+                color="blue", weight=3, opacity=0.8
+            ).add_to(m)
+
+            # подпись длины по дорогам (но линия прямая)
+            midpoint = [
+                (row_u["lat"] + row_v["lat"]) / 2,
+                (row_u["lon"] + row_v["lon"]) / 2,
+            ]
+            folium.map.Marker(
+                midpoint,
+                icon=folium.DivIcon(
+                    html=f"""  
+                    <div style="  
+                        font-size:10pt;  
+                        color:white;  
+                        font-weight:bold;  
+                        text-shadow:-1px -1px 2px black, 1px 1px 2px black;">  
+                        {dist_km:.2f} км  
+                    </div>  
+                    """
+                )
+            ).add_to(m)
+
+            # метка расстояния посередине маршрута
+            midpoint = [(coords_df.iloc[u]["lat"] + coords_df.iloc[v]["lat"]) / 2,
+                        (coords_df.iloc[u]["lon"] + coords_df.iloc[v]["lon"]) / 2]
+            folium.map.Marker(
+                midpoint,
+                icon=folium.DivIcon(
+                    html=f'''    
+                    <div style="    
+                        font-size: 10pt;    
+                        color: white;    
+                        font-weight: bold;    
+                        text-shadow: -1px -1px 2px black, 1px 1px 2px black;">    
+                        {dist_km:.2f} км    
+                    </div>    
+                    '''
+                )
+            ).add_to(m)
+
+        else:
+            # если по каким-то причинам маршрут не найден — рисуем прямую
+            row_u, row_v = coords_df.loc[u], coords_df.loc[v]
+            dist_hav = haversine(row_u["lat"], row_u["lon"], row_v["lat"], row_v["lon"]) / 1000.0
+            folium.PolyLine(
+                locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
+                color="gray", weight=2, opacity=0.5, dash_array="5"
+            ).add_to(m)
+            midpoint = [
+                (row_u["lat"] + row_v["lat"]) / 2,
+                (row_u["lon"] + row_v["lon"]) / 2
+            ]
+            folium.map.Marker(
+                midpoint,
+                icon=folium.DivIcon(
+                    html=f'''    
+                    <div style="    
+                        font-size: 10pt;    
+                        color: gray;    
+                        font-weight: bold;    
+                        text-shadow: -1px -1px 2px white, 1px 1px 2px white;">    
+                        {dist_hav:.2f} км    
+                    </div>    
+                    '''
+                )
+            ).add_to(m)
 
     m.save(output_file)
     print(f"📄 Карта сохранена: {output_file}")
     return output_file
-
 
 # =====================
 #  ГЛАВНАЯ ФУНКЦИЯ API
@@ -162,7 +240,7 @@ import pandas as pd  # добавь импорт наверху, если его
 
 def generate_logistics_mst(
         bbox: Tuple[float, float, float, float],
-        mode: str = "auto",
+        mode: str,
         cache_dir: str = ".",
         output_file: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -178,7 +256,7 @@ def generate_logistics_mst(
     coords_df = extract_coordinates(gdf)
     G = build_geodesic_graph(coords_df)
     mst = build_mst_graph(G)
-    html_path = visualize_mst_map(coords_df, mst, bbox, output_file)
+    html_path = visualize_mst_map(coords_df, mst, bbox, mode, output_file)
 
     # ✅ Формируем полную структуру MST
     points = []
