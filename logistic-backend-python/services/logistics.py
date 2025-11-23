@@ -1,17 +1,25 @@
 import os
-from typing import Tuple, Dict, Any, Optional
-
-import folium
-import geopandas as gpd
-import networkx as nx
 import osmnx as ox
+import geopandas as gpd
 import pandas as pd
-from haversine import haversine, Unit
+import numpy as np
+import networkx as nx
+import folium
+from math import radians, sin, cos, sqrt, atan2, isnan
+from typing import Tuple, Dict, Any, Optional
 
 
 # =====================
 #  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # =====================
+
+def haversine(lat1, lon1, lat2, lon2):
+    """Геодезическое расстояние между точками в метрах"""
+    R = 6371000
+    phi1, phi2 = radians(lat1), radians(lat2)
+    dphi, dlambda = radians(lat2 - lat1), radians(lon2 - lon1)
+    a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
+    return 2 * R * atan2(sqrt(a), sqrt(1 - a))
 
 
 def get_default_tags(mode: str) -> Dict[str, list]:
@@ -59,7 +67,7 @@ def extract_coordinates(gdf: gpd.GeoDataFrame) -> pd.DataFrame:
     coords = []
     for _, row in gdf.iterrows():
         geom = row.geometry
-        if geom.geom_type in ["Polygon", "MultiPolygon", "LineString", "MultiLineString"]:
+        if geom.geom_type in ["Polygon", "MultiPolygon"]:
             y, x = geom.centroid.y, geom.centroid.x
         else:
             y, x = geom.y, geom.x
@@ -72,17 +80,12 @@ def extract_coordinates(gdf: gpd.GeoDataFrame) -> pd.DataFrame:
 
 
 def build_geodesic_graph(coords_df: pd.DataFrame) -> nx.Graph:
-    """Создаёт граф, соединяя все точки прямыми (геодезическими) расстояниями."""
+    """Создаёт граф, соединяя все точки прямыми расстояниями"""
     edges = []
     for i, row_i in coords_df.iterrows():
         for j, row_j in coords_df.iterrows():
             if i < j:
-                # ✅ обязательно передаём кортежи (lat, lon)
-                dist = haversine(
-                    (row_i["lat"], row_i["lon"]),
-                    (row_j["lat"], row_j["lon"]),
-                    unit=Unit.KILOMETERS,  # или Unit.METERS
-                )
+                dist = haversine(row_i["lat"], row_i["lon"], row_j["lat"], row_j["lon"])
                 edges.append((i, j, {"weight": dist}))
 
     G = nx.Graph()
@@ -96,31 +99,22 @@ def build_mst_graph(G: nx.Graph) -> nx.Graph:
     return nx.minimum_spanning_tree(G)
 
 
-def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.html"):
-    """
-    Отображает MST на карте Folium.
-    Для mode='auto' — длина по дорогам,
-    для других mode — длина прямой между точками.
-    """
-    # Центр карты
+def visualize_mst_map(coords_df, mst, bbox, output_file="logistics_mst.html"):
     m = folium.Map(
         location=[(bbox[1] + bbox[3]) / 2, (bbox[0] + bbox[2]) / 2],
-        zoom_start=12
+        zoom_start=11
     )
 
     # точки
     for i, row in coords_df.iterrows():
         if pd.isna(row["lat"]) or pd.isna(row["lon"]):
             continue
-
-        tags = row.get("tags", {})
+        tags = row["tags"]
         name = tags.get("name")
         btype = tags.get("building", "—")
-
         popup_lines = [f"<b>Тип:</b> {btype}"]
         if name and not pd.isna(name):
             popup_lines.append(f"<b>Название:</b> {name}")
-
         folium.CircleMarker(
             location=[float(row["lat"]), float(row["lon"])],
             radius=6, color="red", fill=True, fill_color="red",
@@ -145,6 +139,7 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
     print(f"📄 Карта сохранена: {output_file}")
     return output_file
 
+
 # =====================
 #  ГЛАВНАЯ ФУНКЦИЯ API
 # =====================
@@ -154,7 +149,7 @@ import pandas as pd  # добавь импорт наверху, если его
 
 def generate_logistics_mst(
         bbox: Tuple[float, float, float, float],
-        mode: str,
+        mode: str = "auto",
         cache_dir: str = ".",
         output_file: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -170,7 +165,7 @@ def generate_logistics_mst(
     coords_df = extract_coordinates(gdf)
     G = build_geodesic_graph(coords_df)
     mst = build_mst_graph(G)
-    html_path = visualize_mst_map(coords_df, mst, bbox, mode, output_file)
+    html_path = visualize_mst_map(coords_df, mst, bbox, output_file)
 
     # Формируем полную структуру MST
     points = []
