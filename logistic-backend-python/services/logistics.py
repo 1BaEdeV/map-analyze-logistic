@@ -174,8 +174,9 @@ def build_sea_graph(coords_df: pd.DataFrame) -> nx.Graph:
 def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.html"):
     """
     Отображает MST на карте Folium.
-    Для mode='rail' линии имеют цвета по атрибуту 'colour',
-    для mode='auto' и других — просто зелёные/синие.
+    - Для mode='auto': длина маршрутов по дорогам OSM.
+    - Для mode='rail': линии по 'colour' или серые, если цвета нет.
+    - Для остальных режимов — прямые отрезки между точками.
     """
     # Центр карты
     m = folium.Map(
@@ -202,38 +203,100 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
             popup=folium.Popup("<br>".join(popup_lines), max_width=500)
         ).add_to(m)
 
+    # Для авто-транспорта подгружаем дорожный граф OSM
+    G_drive = None
+    if mode == "auto":
+        print(f"Загрузка дорожной сети для mode='{mode}' ...")
+        G_drive = ox.graph_from_bbox(bbox, network_type="drive")
+        print(f"Граф дорог: узлов={len(G_drive.nodes)}, рёбер={len(G_drive.edges)}")
+
+        coords_df = coords_df.copy()
+        coords_df["osm_node"] = ox.distance.nearest_nodes(
+            G_drive,
+            X=coords_df["lon"].values,
+            Y=coords_df["lat"].values
+        )
+
     print(f"Отрисовка рёбер для mode='{mode}' ...")
 
-    # --- рёбра ---
     for u, v, data in mst.edges(data=True):
-        row_u = coords_df.loc[u]
-        row_v = coords_df.loc[v]
+        row_u, row_v = coords_df.loc[u], coords_df.loc[v]
 
+        # ---------------- AUTO MODE (расстояние по дорогам)
+        if mode == "auto":
+            node_u = row_u["osm_node"]
+            node_v = row_v["osm_node"]
+
+            try:
+                route = ox.routing.shortest_path(G_drive, node_u, node_v, weight="length", cpus=4)
+            except Exception:
+                route = None
+
+            if route and len(route) > 1:
+                route_gdf = ox.routing.route_to_gdf(G_drive, route)
+                dist_m = float(route_gdf["length"].sum())
+                dist_km = dist_m / 1000.0
+                popup_html = f"<b>Расстояние по дорогам:</b> {dist_km:.2f}&nbsp;км"
+                color = "blue"
+                line_coords = list(zip(route_gdf.geometry.y, route_gdf.geometry.x))
+            else:
+                dist_hav = haversine(
+                    (row_u["lat"], row_u["lon"]),
+                    (row_v["lat"], row_v["lon"])
+                )
+                popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
+                color = "gray"
+                line_coords = [
+                    [row_u["lat"], row_u["lon"]],
+                    [row_v["lat"], row_v["lon"]]
+                ]
+
+            folium.PolyLine(
+                locations=line_coords,
+                color=color, weight=3, opacity=0.8,
+                popup=folium.Popup(popup_html, max_width=250)
+            ).add_to(m)
+            continue
+
+        # ---------------- RAIL MODE (цветные линии метро)
+        if mode == "rail":
+            dist_hav = haversine(
+                (row_u["lat"], row_u["lon"]),
+                (row_v["lat"], row_v["lon"])
+            )
+            popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
+
+            edge_color = data.get("colour")
+            if pd.isna(edge_color) or not edge_color:
+                edge_color = "gray"
+            else:
+                edge_color = str(edge_color).strip().lower()
+
+            folium.PolyLine(
+                locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
+                color=edge_color,
+                weight=4,
+                opacity=0.85,
+                popup=folium.Popup(popup_html, max_width=250)
+            ).add_to(m)
+            continue
+
+        # ---------------- ОСТАЛЬНЫЕ МОДЫ (aero, sea и др.)
         dist_hav = haversine(
             (row_u["lat"], row_u["lon"]),
             (row_v["lat"], row_v["lon"])
         )
         popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
 
-        edge_color = data.get("colour")
-        if pd.isna(edge_color) or not edge_color:
-            edge_color = "gray"
-        else:
-            edge_color = str(edge_color).strip().lower()
-
         folium.PolyLine(
             locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
-            color=edge_color,
-            weight=4,
-            opacity=0.85,
+            color="gray", weight=3, opacity=0.8,
             popup=folium.Popup(popup_html, max_width=250)
         ).add_to(m)
 
-    # сохраняем на диск
     m.save(output_file)
     print(f"Карта сохранена: {output_file}")
     return output_file
-
 # =====================
 #  ГЛАВНАЯ ФУНКЦИЯ API
 # =====================
@@ -258,10 +321,13 @@ def generate_logistics_mst(
     # mst = build_mst_graph(G)
     if mode == "rail":
         mst = build_mst_rail_by_color(coords_df)
+    elif mode == "sea":
+        G = build_sea_graph(coords_df)
+        mst = build_mst_graph(G)
     else:
         G = build_geodesic_graph(coords_df)
         mst = build_mst_graph(G)
-    html_path = visualize_mst_map(coords_df, mst, bbox, output_file)
+    html_path = visualize_mst_map(coords_df, mst, bbox, mode, output_file)
 
     # Формируем полную структуру MST
     points = []
@@ -303,4 +369,5 @@ def generate_logistics_mst(
         "bbox": bbox,
         "status": "ok"
     }
+
 
