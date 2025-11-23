@@ -28,6 +28,7 @@ start.bat
 
 ### Структура репозитория
 
+```markdown
 .
 ├── cache                   # Папка для результатов
 ├── logistic-backend/       # Бэкенд на FastAPI
@@ -48,6 +49,6 @@ start.bat
 ├── start.sh                # Скрипт запуска (Linux/macOS)
 ├── start.bat               # Скрипт запуска (Windows)
 └── README.md
-
+```
 
 
