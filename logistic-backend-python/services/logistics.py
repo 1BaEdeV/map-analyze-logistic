@@ -273,11 +273,31 @@ def draw_mst_layer(m, coords_df, mst, bbox, mode):
         if mode == "auto" and G_drive is not None:
             try:
                 route = ox.routing.shortest_path(G_drive, ru["osm_node"], rv["osm_node"], weight="length")
-                route_gdf = ox.routing.route_to_gdf(G_drive, route)
-                dist_km = route_gdf["length"].sum() / 1000
+                if route and len(route) > 1:
+                    route_coords = [(G_drive.nodes[n]['y'], G_drive.nodes[n]['x']) for n in route]
+                    route_gdf = ox.routing.route_to_gdf(G_drive, route)
+                    dist_km = route_gdf["length"].sum() / 1000
+
+                    folium.PolyLine(
+                        locations=route_coords,
+                        color="gray",
+                        weight=4,
+                        opacity=0.9,
+                        popup=f"{dist_km:.2f} км"
+                    ).add_to(fg)
+                    continue
+                else:
+                    raise ValueError("Путь не найден")
             except Exception:
                 dist_km = haversine((ru["lat"], ru["lon"]), (rv["lat"], rv["lon"]))
-            color, weight = "gray", 3
+                folium.PolyLine(
+                    [(ru["lat"], ru["lon"]), (rv["lat"], rv["lon"])],
+                    color="gray",
+                    weight=3,
+                    opacity=0.85,
+                    popup=f"{dist_km:.2f} км (fallback)"
+                ).add_to(fg)
+            continue
         # RAIL
         elif mode == "rail":
             dist_km = haversine((ru["lat"], ru["lon"]), (rv["lat"], rv["lon"]))
