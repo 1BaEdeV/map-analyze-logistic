@@ -272,7 +272,7 @@ def draw_mst_layer(m, coords_df, mst, bbox, mode):
         # AUTO с OSMnx
         if mode == "auto" and G_drive is not None:
             try:
-                route = ox.routing.shortest_path(G_drive, ru["osm_node"], rv["osm_node"], weight="length")
+                route = ox.routing.shortest_path(G_drive, ru["osm_node"], rv["osm_node"], weight="length", cpus=4)
                 if route and len(route) > 1:
                     route_coords = [(G_drive.nodes[n]['y'], G_drive.nodes[n]['x']) for n in route]
                     route_gdf = ox.routing.route_to_gdf(G_drive, route)
