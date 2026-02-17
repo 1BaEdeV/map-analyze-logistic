@@ -1,15 +1,19 @@
+import os 
+import shutil
 import pytest
-import pandas as pd
-import geopandas as gpd
-import numpy as np
-from shapely.geometry import Point, Polygon
-import networkx as nx
-import os
 import tempfile
-from unittest.mock import patch, MagicMock
+
+
+import numpy as np
+import pandas as pd
+import networkx as nx
+import geopandas as gpd
+
+
 from services.logistics import *
 from fastapi.testclient import TestClient
-import shutil
+from unittest.mock import patch, MagicMock
+from shapely.geometry import Point, Polygon
 
 # Импортируем приложение
 from main import app, DEFAULT_BBOX
