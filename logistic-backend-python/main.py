@@ -9,6 +9,8 @@ from services.logistics import generate_logistics_mst,  analyze_logistics_metric
 from services.logistics import compute_metric
 import os
 
+os.makedirs("cache",exist_ok = True)
+
 app = FastAPI(
     title="Logistics Network API",
     description="API для анализа логистических сетей с использованием MST",
