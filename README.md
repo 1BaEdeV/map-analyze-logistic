@@ -16,7 +16,7 @@
 
 ## Требования
 
-- **Python** 3.9+ (рекомендуется виртуальное окружение)  
+- **Python** 3.11 (рекомендуется виртуальное окружение)  
 - **Node.js** 18+ и **npm** (для запуска фронтенда)  
 - **Python-библиотеки**: FastAPI, OSMnx, NetworkX, GeoPandas, Folium, etc. (см. `requirements.txt`)  
 - **Node-библиотеки**: React, React-Leaflet, Leaflet (устанавливаются через npm)
